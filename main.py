@@ -1,7 +1,7 @@
 import os
 import cv2
 import numpy as np
-from keras.callbacks import EarlyStopping
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
@@ -10,6 +10,8 @@ from tensorflow.keras.applications import ResNet50V2
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
 from collections import Counter
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 # Define the patch size and other constants
 PATCH_SIZE = 200
@@ -78,7 +80,6 @@ model = Sequential([
     base_model,
     GlobalAveragePooling2D(),
     Dense(128, activation='relu'),
-    Dropout(0.5),
     Dense(NUM_CLASSES, activation='softmax')
 ])
 
@@ -91,14 +92,18 @@ model.compile(optimizer=Adam(),
 model.summary()
 
 # Define early stopping callback
-early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+early_stopping = EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)
+
+# Define learning rate reducer callback
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.8,
+                              patience=5, min_lr=0.00001)
 
 # Train the model
 model.fit(train_patches, train_labels,
           validation_data=(val_patches, val_labels),
-          epochs=50,
+          epochs=200,
           batch_size=8,
-          callbacks=[early_stopping])
+          callbacks=[early_stopping, reduce_lr])
 
 # Save the model
 model.save("wood_chip_resnet50v2_classifier.h5")
@@ -108,6 +113,7 @@ def predict_image_class(model, image, patch_size=PATCH_SIZE):
     patches = generate_patches(image, patch_size)
     patch_predictions = model.predict(patches)
     predicted_classes = np.argmax(patch_predictions, axis=1)
+    print(predicted_classes)
     most_common_class = Counter(predicted_classes).most_common(1)[0][0]
     return most_common_class
 
@@ -116,10 +122,16 @@ test_image_results = {}
 correct_predictions = 0
 total_images = 0
 
+# Initialize variables to store true and predicted labels
+true_labels = []
+predicted_labels = []
+
 for class_name in test_data:
     for img_name, image in test_data[class_name]:
         final_prediction = predict_image_class(model, image)
         test_image_results[img_name] = CLASSES[final_prediction]
+        predicted_labels.append(final_prediction)
+        true_labels.append(CLASSES.index(class_name))
         if final_prediction == CLASSES.index(class_name):
             correct_predictions += 1
         total_images += 1
@@ -128,6 +140,16 @@ for class_name in test_data:
 # Calculate and print the test accuracy
 test_accuracy = correct_predictions / total_images
 print(f"Test Accuracy: {test_accuracy * 100:.2f}%")
+
+# Compute the confusion matrix
+cm = confusion_matrix(true_labels, predicted_labels)
+
+# Plot the confusion matrix
+plt.figure(figsize=(4,3.5))
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=CLASSES)
+disp.plot(cmap=plt.cm.Blues)
+plt.savefig('drax_conf_marix.jpg', dpi = 600, bbox_inches = 'tight')
+plt.show()
 
 # Optionally, save the results to a file
 with open("test_image_predictions.txt", "w") as file:
